@@ -5,6 +5,7 @@ from datetime import timedelta
 import srt
 import subprocess
 import datetime as dt
+from tqdm import tqdm
 
 import pymediainfo
 
@@ -65,31 +66,35 @@ def generate_ffmpeg_list_file(videolist, path):
 def get_length(video):
     obj = pymediainfo.MediaInfo.parse(video)
     length = int(obj.video_tracks[0].duration)
-    return length
+    return timedelta(milliseconds=length)
 
 def generate_subtitles_file(videolist, path):
     count = 1
-    starttime = srt.ZERO_TIMEDELTA
-    endtime = None
+    totallength = srt.ZERO_TIMEDELTA
+    sublist = []
     for i in videolist:
-        currentlength = get_length(i)
-        srt.Subtitle(count, starttime)
-
+        starttime = totallength
+        totallength += get_length(i)
+        endtime = totallength
+        sublist.append(srt.Subtitle(count, start=starttime, end=endtime, content=os.path.basename(i)))
         count += 1
+    with open(path, "w") as f:
+        f.write(srt.compose(sublist))
 
 def run_ffmpeg_merge(inputfile, outputfile, logfile, subtitlesfile):
-    with open(logfile, "a"):
+    with open(logfile, "a") as f:
+        ffmpeg_string = f"ffmpeg -y -i \"{subtitlesfile}\" -f concat -safe 0 -i \"{inputfile}\" -c:a copy -c:v copy -c:s mov_text \"{outputfile}\""
+        runobj = subprocess.run(ffmpeg_string, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, text=True, check=True)
+        f.write(dt.datetime.now().strftime("[%Y/%m/%d %H:%M:%S]\n"))
+        f.write(runobj.stdout)
+        f.write("\n")
 
-        ffmpeg_string = f"ffmpeg -y -i {subtitlesfile} -f concat -safe 0 {inputfile} -c:a copy -c:v copy -c:s mov_text {outputfile}"
+def generate_ffmetadata(videolist, lengthlist, path):
 
 
 
-    runobj = subprocess.run(ffmpeg_string, capture_output=True, text=True)
-    runstderr = runobj.stderr
-    runstdout = runobj.stdout
 
-
-def main():
+def main1():
     os.chdir(VIDEOSTO)
 
     videoslist = get_all_videos_in_subfolders(VIDEOSFROM)
@@ -114,6 +119,24 @@ def main():
     runstdout = runobj.stdout
 
 
+    print()
+
+def main():
+    videolist = get_all_videos_in_subfolders(VIDEOSFROM)
+    unique_dates = get_unique_dates(videolist)
+    videossplitbydate = []
+    for i in unique_dates:
+        videossplitbydate.append(get_videos_by_date(videolist, i))
+
+    for i in tqdm(videossplitbydate):
+        outputfilepath = VIDEOSTO+os.path.basename(i[0])
+        ffmpeg_input_file_path = VIDEOSTO + "__input.txt"
+        subfilepath = VIDEOSTO+"subtitles\\"+os.path.basename(i[0])+".srt"
+        logfilepath = VIDEOSTO+"ffmpeglog.txt"
+
+        generate_ffmpeg_list_file(i, ffmpeg_input_file_path)
+        generate_subtitles_file(i, subfilepath)
+        run_ffmpeg_merge(ffmpeg_input_file_path, outputfilepath, logfilepath, subfilepath)
     print()
 
 if __name__ == "__main__":
