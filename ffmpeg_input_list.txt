@@ -1,0 +1,7 @@
+file 'D:\Videos\NVIDIA\Desktop\Desktop 2026.03.02 - 16.37.52.03.DVR.mp4'
+file 'D:\Videos\NVIDIA\Desktop\Desktop 2026.03.02 - 16.39.33.04.DVR.mp4'
+file 'D:\Videos\NVIDIA\Desktop\Desktop 2026.03.02 - 16.40.00.05.DVR.mp4'
+file 'D:\Videos\NVIDIA\Desktop\Desktop 2026.03.02 - 16.40.44.06.DVR.mp4'
+file 'D:\Videos\NVIDIA\Magicka\Magicka 2026.03.02 - 18.46.45.02.DVR.mp4'
+file 'D:\Videos\NVIDIA\Magicka\Magicka 2026.03.02 - 19.32.41.03.DVR.mp4'
+file 'D:\Videos\NVIDIA\Magicka\Magicka 2026.03.02 - 19.39.28.04.DVR.mp4'
