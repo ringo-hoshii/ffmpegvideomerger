@@ -1,6 +1,5 @@
 from math import floor
 from pprint import pprint
-from video import Video
 import datetime
 
 class Test:
@@ -14,7 +13,7 @@ def main1():
 
     tmp = []
     count = 0
-    with open("metadata.txt", "r") as f:
+    with open("../metadata.txt", "r") as f:
         while True:
             tmpstr = f.readline()
             if tmpstr == "":
