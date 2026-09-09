@@ -1,9 +1,12 @@
-import cProfile
-import pstats
-from datetime import timedelta
-from http.cookiejar import cut_port_re
-
-from tqdm import tqdm
+# TODO: make a full fledged CLI with flags and help message
+# TODO: upload it to PyPI?
+# TODO: make it as easy as possible to install on Linux
+# TODO: make it as easy as possible to install in general and add installation instructions in README.md
+# TODO: make it pipe integrated
+# TODO: GitHub releases?
+# TODO: turn it into a class/module?
+# TODO: make tqdm progress bar optional?
+# TODO: headless?
 
 import os
 import re
@@ -12,6 +15,10 @@ import subprocess
 import pymediainfo
 
 import datetime as dt
+
+from datetime import timedelta
+from pathlib import Path
+from tqdm import tqdm
 
 STARTDATE = ""
 ENDDATE = ""
@@ -86,21 +93,18 @@ def get_videos_by_date(videolist, date):
 def generate_ffmpeg_list_file(videolist, path):
     with open(path, "w") as f:
         for video in videolist:
+            video = video.replace("'", "'\\''")
             f.write(f"file '{video}'\n")
-
 
 def load_metadata(path):
     metadata = {}
-
     with open(path, "r", encoding="utf-8") as f:
         for line in f:
             match = re.match(r'^"([^"]+)"\s+([\d.]+)', line)
-
             if match:
                 filename = match.group(1)
                 duration = float(match.group(2))
                 metadata[filename] = duration
-
     return metadata
 
 def timedelta_to_milliseconds(delta):
@@ -146,7 +150,7 @@ TITLE={os.path.basename(i)}\n\n"""
 
 def run_ffmpeg_merge(inputfile, outputfile, logfile, subtitlesfile, metadatafile):
     with open(logfile, "a") as f:
-        ffmpeg_string = f"ffmpeg -y -i \"{subtitlesfile}\" -i \"{metadatafile}\" -f concat -safe 0 -i \"{inputfile}\" -c:a copy -c:v h264_nvenc -c:s mov_text -map_metadata 1 -map_chapters 1 \"{outputfile}\""
+        ffmpeg_string = f"ffmpeg -y -i \"{subtitlesfile}\" -i \"{metadatafile}\" -f concat -safe 0 -hwaccel cuda -hwaccel_output_format cuda -i \"{inputfile}\" -c:a copy -c:v av1_nvenc -c:s mov_text -map_metadata 1 -map_chapters 1 \"{outputfile}\""
         runobj = subprocess.run(ffmpeg_string, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, text=True)
         f.write(dt.datetime.now().strftime("[%Y/%m/%d %H:%M:%S]\n"))
         f.write(runobj.stdout)
@@ -154,9 +158,31 @@ def run_ffmpeg_merge(inputfile, outputfile, logfile, subtitlesfile, metadatafile
         if runobj.returncode != 0:
             raise subprocess.CalledProcessError(runobj.returncode, ffmpeg_string, runobj.stdout, runobj.stderr)
 
-def main():
-    count = 0
+def merge_clips(videolist, outputfile):
+    # PREPARATION PART
+    outputdirectory = os.path.dirname(outputfile)
 
+    videoname = os.path.basename(videolist[0]).split(" - ")[0].replace(" ", "_").replace(".", "_").replace("'", "") + ".mp4"
+    outputfilepath = outputdirectory+"\\"+videoname
+    ffmpeg_input_file_path = outputdirectory + "\\__input.txt"
+    subfilepath = outputdirectory+f"\\subtitles\\"+os.path.basename(videolist[0])+".srt"
+    logfilepath = outputdirectory+f"\\logs\\ffmpeglog_{dt.datetime.now().strftime("%Y_%m_%d")}.txt"
+    metadatapath = outputdirectory+f"\\ffmpegmetadata.txt"
+    for i in (os.path.dirname(subfilepath), os.path.dirname(logfilepath)):
+        directory = Path(i)
+        directory.mkdir(parents=True, exist_ok=True)
+    # END OF PREPARATION PART
+
+    # MUTATING IO OPERATIONS
+    generate_ffmpeg_list_file(videolist, ffmpeg_input_file_path)
+    lengthlist = get_length_list(videolist)
+    generate_subtitles_file(videolist, subfilepath, lengthlist)
+    generate_ffmetadata(videolist, lengthlist, metadatapath)
+    run_ffmpeg_merge(ffmpeg_input_file_path, outputfilepath, logfilepath, subfilepath, metadatapath)
+    # END OF MUTATING IO OPERATIONS
+
+def main():
+    # MAIN PREPARATION PART
     videolist = get_all_videos_in_subfolders(VIDEOSFROM)
     unique_dates = get_unique_dates(videolist)
     videossplitbydate = []
@@ -164,38 +190,13 @@ def main():
         i_datetime = dt.datetime.strptime(i, "%Y.%m.%d")
         if STARTDATE < i_datetime < ENDDATE:
             videossplitbydate.append(get_videos_by_date(videolist, i))
+    # END OF MAIN PREPARATION PART
 
     for i in tqdm(videossplitbydate):
-        if count >= 2:
-            break
-        outputfilepath = VIDEOSTO+os.path.basename(i[0])
-        ffmpeg_input_file_path = VIDEOSTO + "__input.txt"
-        subfilepath = VIDEOSTO+f"subtitles\\"+os.path.basename(i[0])+".srt"
-        logfilepath = VIDEOSTO+f"logs\\ffmpeglog_{dt.datetime.now().strftime("%Y_%m_%d")}.txt"
-        metadatapath = VIDEOSTO+f"ffmpegmetadata.txt"
-
-        generate_ffmpeg_list_file(i, ffmpeg_input_file_path)
-        lengthlist = get_length_list(i)
-        generate_subtitles_file(i, subfilepath, lengthlist)
-        generate_ffmetadata(i, lengthlist, metadatapath)
-        run_ffmpeg_merge(ffmpeg_input_file_path, outputfilepath, logfilepath, subfilepath, metadatapath)
-
-        count += 1
+        videoname = os.path.basename(i[0]).split(" - ")[0].replace(" ", "_").replace(".", "_").replace("'", "") + ".mp4"
+        outputfilepath = VIDEOSTO+videoname
+        merge_clips(i, outputfilepath)
     print()
 
-def show_profiler_data(path):
-    with open(path, "w") as f:
-        profiler = cProfile.Profile()
-        stats = pstats.Stats(profiler, stream=f)
-        stats.strip_dirs().sort_stats("cumulative").print_stats()
-
 if __name__ == "__main__":
-
-    # profiler = cProfile.Profile()
-    # profiler.enable()
     main()
-    # profiler.disable()
-    # os.chdir(SCRIPT_WORKING_DIRECTORY)
-    # profiler.dump_stats("main.prof")
-
-    # show_profiler_data("main.prof")
