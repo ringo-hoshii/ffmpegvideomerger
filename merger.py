@@ -1,0 +1,170 @@
+# TODO: make a full fledged CLI with flags and help message
+# TODO: upload it to PyPI?
+# TODO: make it as easy as possible to install on Linux
+# TODO: make it as easy as possible to install in general and add installation instructions in README.md
+# TODO: make it pipe integrated
+# TODO: GitHub releases?
+# TODO: turn it into a class/module?
+# TODO: make tqdm progress bar optional?
+# TODO: headless?
+
+import os
+import re
+import srt
+import subprocess
+import pymediainfo
+
+import datetime as dt
+
+from datetime import timedelta
+from pathlib import Path
+
+VIDEO_DATE_PART = r'(\d{4}\.\d{2}\.\d{2} - \d{2}\.\d{2}\.\d{2})'
+FILTER_FOR_VIDEOS = r'^.*' + VIDEO_DATE_PART + '.*\\.DVR\\.mp4$'
+
+def get_files_in_directory(directory):
+    files = next(os.walk(directory), (None, None, []))[2]
+    return files
+
+def get_directories_in_directory(working_directory) -> list[str]:
+    directories = next(os.walk(working_directory), (None, None, []))[1]
+    return directories
+
+def get_videos_in_directory(working_directory, filter_string=FILTER_FOR_VIDEOS):
+    pattern = re.compile(filter_string)
+    video_filter_lambda = lambda x: pattern.match(x)
+    videos_in_directory = list(filter(video_filter_lambda, get_files_in_directory(working_directory)))
+    return videos_in_directory
+
+def list_files_walk(start_path='.'):
+    lst = []
+    for root, dirs, files in os.walk(start_path):
+        for file in files:
+            lst.append(os.path.join(root, file))
+    return lst
+
+def get_date_part(videoname):
+    return re.search(FILTER_FOR_VIDEOS, videoname).group(1)
+
+def get_date(videoname: str) -> dt.datetime:
+     return dt.datetime.strptime(get_date_part(videoname).split(" - ")[0], "%Y.%m.%d")
+
+def get_all_videos_in_subfolders(working_directory):
+    fileslist = list_files_walk(working_directory)
+    videoslist = list(filter(lambda x: re.compile(FILTER_FOR_VIDEOS).match(x), fileslist))
+    videoslist.sort(key=lambda x: get_date_part(x))
+    return videoslist
+
+def get_unique_dates(videolist):
+    tmp = []
+    for i in videolist:
+        tmp.append(get_date_part(i).split(" - ")[0])
+    res = list(set(tmp))
+    res.sort()
+    return res
+
+def get_videos_by_date(videolist, date):
+    resultlist = list(filter(lambda x: date in x, videolist))
+    return resultlist
+
+def generate_ffmpeg_list_file(videolist, path):
+    with open(path, "w") as f:
+        for video in videolist:
+            video = video.replace("'", "'\\''")
+            f.write(f"file '{video}'\n")
+
+def load_metadata(path):
+    metadata = {}
+    with open(path, "r", encoding="utf-8") as f:
+        for line in f:
+            match = re.match(r'^"([^"]+)"\s+([\d.]+)', line)
+            if match:
+                filename = match.group(1)
+                duration = float(match.group(2))
+                metadata[filename] = duration
+    return metadata
+
+def timedelta_to_milliseconds(delta):
+    # return delta.days * 86400000 + delta.seconds * 1000 + delta.microseconds / 1000
+    return int(delta / timedelta(milliseconds=1))
+
+def get_length(video):
+    obj = pymediainfo.MediaInfo.parse(video)
+    length = int(obj.video_tracks[0].duration)
+    return timedelta(milliseconds=length)
+
+def get_length_list(videolist):
+    res = []
+    for i in videolist:
+        res.append(get_length(i))
+    return res
+
+def has_multiple_audio_tracks(video) -> bool:
+    media_info = pymediainfo.MediaInfo.parse(video)
+    audio_tracks = [track for track in media_info.tracks if track.track_type == "Audio"]
+    return len(audio_tracks) > 1
+
+def videolist_has_multiple_audio_tracks(videolist):
+    for i in videolist:
+        if has_multiple_audio_tracks(i):
+            return True
+    return False
+
+def generate_subtitles_file(videolist, path, lengthlist):
+    count = 1
+    totallength = srt.ZERO_TIMEDELTA
+    sublist = []
+    for i, j in zip(videolist, lengthlist):
+        starttime = totallength
+        totallength += j
+        endtime = totallength
+        sublist.append(srt.Subtitle(count, start=starttime, end=endtime, content=os.path.basename(i)))
+        count += 1
+    with open(path, "w") as f:
+        f.write(srt.compose(sublist))
+
+def generate_ffmetadata(videolist, lengthlist, path):
+    currentlength = srt.ZERO_TIMEDELTA
+    with open(path, "w") as f:
+        f.write(";FFMETADATA1\n\n")
+        for i, j in zip(videolist, lengthlist):
+            metadata_block = f"""[CHAPTER]
+TIMEBASE=1/1000
+START={timedelta_to_milliseconds(currentlength)}
+END={timedelta_to_milliseconds(currentlength+j)}
+TITLE={os.path.basename(i)}\n\n"""
+            f.write(metadata_block)
+            currentlength += j
+
+def run_ffmpeg_merge(inputfile, outputfile, logfile, subtitlesfile, metadatafile):
+    with open(logfile, "a") as f:
+        ffmpeg_string = f"ffmpeg -y -i \"{subtitlesfile}\" -i \"{metadatafile}\" -f concat -safe 0 -hwaccel cuda -hwaccel_output_format cuda -i \"{inputfile}\" -c:a copy -c:v av1_nvenc -c:s mov_text -map_metadata 1 -map_chapters 1 \"{outputfile}\""
+        runobj = subprocess.run(ffmpeg_string, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, text=True)
+        f.write(dt.datetime.now().strftime("[%Y/%m/%d %H:%M:%S]\n"))
+        f.write(runobj.stdout)
+        f.write("\n")
+        if runobj.returncode != 0:
+            raise subprocess.CalledProcessError(runobj.returncode, ffmpeg_string, runobj.stdout, runobj.stderr)
+
+def merge_clips(videolist, outputfile):
+    # PREPARATION PART
+    outputdirectory = os.path.dirname(outputfile)
+
+    videoname = os.path.basename(videolist[0]).split(" - ")[0].replace(" ", "_").replace(".", "_").replace("'", "") + ".mp4"
+    outputfilepath = outputdirectory+"\\"+videoname
+    ffmpeg_input_file_path = outputdirectory + "\\__input.txt"
+    subfilepath = outputdirectory+f"\\subtitles\\"+os.path.basename(videolist[0])+".srt"
+    logfilepath = outputdirectory+f"\\logs\\ffmpeglog_{dt.datetime.now().strftime("%Y_%m_%d")}.txt"
+    metadatapath = outputdirectory+f"\\ffmpegmetadata.txt"
+    for i in (os.path.dirname(subfilepath), os.path.dirname(logfilepath)):
+        directory = Path(i)
+        directory.mkdir(parents=True, exist_ok=True)
+    # END OF PREPARATION PART
+
+    # MUTATING IO OPERATIONS
+    generate_ffmpeg_list_file(videolist, ffmpeg_input_file_path)
+    lengthlist = get_length_list(videolist)
+    generate_subtitles_file(videolist, subfilepath, lengthlist)
+    generate_ffmetadata(videolist, lengthlist, metadatapath)
+    run_ffmpeg_merge(ffmpeg_input_file_path, outputfilepath, logfilepath, subfilepath, metadatapath)
+    # END OF MUTATING IO OPERATIONS
