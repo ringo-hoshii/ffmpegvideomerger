@@ -1,12 +1,13 @@
-# TODO: make a full fledged CLI with flags and help message
+# TODO: move internal folders from
+# TODO: make a full fledged CLI with flags and a help message
 # TODO: upload it to PyPI?
 # TODO: make it as easy as possible to install on Linux
-# TODO: make it as easy as possible to install in general and add installation instructions in README.md
-# TODO: make it pipe integrated
-# TODO: GitHub releases?
+# TODO: make it as easy as possible to install in general and add installation instructions in README.md and remove default folders
+# TODO: make it pipe compatible (like merge a set of videos from stdin)
+# TODO: automate GitHub releases?
 # TODO: turn it into a class/module?
-# TODO: make tqdm progress bar optional?
-# TODO: headless?
+# TODO: make tqdm progress bar optional (for CLI (also maybe detect if terminal is capable of displaying the progress bar))
+# TODO: headless (basically same as last entry)?
 
 import os
 import re
@@ -63,7 +64,7 @@ def get_unique_dates(videolist):
     res.sort()
     return res
 
-def get_videos_by_date(videolist, date):
+def get_videos_by_date(videolist, date: str):
     resultlist = list(filter(lambda x: date in x, videolist))
     return resultlist
 
@@ -136,9 +137,29 @@ TITLE={os.path.basename(i)}\n\n"""
             f.write(metadata_block)
             currentlength += j
 
-def run_ffmpeg_merge(inputfile, outputfile, logfile, subtitlesfile, metadatafile):
+def run_ffmpeg_merge(
+        inputfile,
+        outputfile,
+        logfile,
+        subtitlesfile,
+        metadatafile,
+        merge_2_audio_tracks=False,
+        video_encoding="av1_nvenc",
+        audio_encoding="copy",
+        audio_bitrate="192k"):
     with open(logfile, "a") as f:
-        ffmpeg_string = f"ffmpeg -y -i \"{subtitlesfile}\" -i \"{metadatafile}\" -f concat -safe 0 -hwaccel cuda -hwaccel_output_format cuda -i \"{inputfile}\" -c:a copy -c:v av1_nvenc -c:s mov_text -map_metadata 1 -map_chapters 1 \"{outputfile}\""
+        merge_2_audio_tracks_part = ""
+        if merge_2_audio_tracks:
+            audio_encoding = "aac"
+            merge_2_audio_tracks_part = "-ac 2 -filter_complex amerge=inputs=2"
+        # else:
+        #     audio_encoding = "copy"
+        if audio_encoding == "copy":
+            audio_bitrate_part = ""
+        else:
+            audio_bitrate_part = f"-b:a {audio_bitrate}"
+
+        ffmpeg_string = f"ffmpeg -y -i \"{subtitlesfile}\" -i \"{metadatafile}\" -f concat -safe 0 -hwaccel cuda -hwaccel_output_format cuda -i \"{inputfile}\" -c:a {audio_encoding} {audio_bitrate_part} {merge_2_audio_tracks_part} -c:v {video_encoding} -c:s mov_text -map_metadata 1 -map_chapters 1 \"{outputfile}\""
         runobj = subprocess.run(ffmpeg_string, stderr=subprocess.STDOUT, stdout=subprocess.PIPE, text=True)
         f.write(dt.datetime.now().strftime("[%Y/%m/%d %H:%M:%S]\n"))
         f.write(runobj.stdout)
@@ -146,7 +167,7 @@ def run_ffmpeg_merge(inputfile, outputfile, logfile, subtitlesfile, metadatafile
         if runobj.returncode != 0:
             raise subprocess.CalledProcessError(runobj.returncode, ffmpeg_string, runobj.stdout, runobj.stderr)
 
-def merge_clips(videolist, outputfile):
+def merge_clips(videolist: list[os.PathLike[str]], outputfile, merge_2_audio_tracks=False, video_encoding="av1_nvenc", audio_encoding="copy", audio_bitrate="192k"):
     # PREPARATION PART
     outputdirectory = os.path.dirname(outputfile)
 
@@ -166,5 +187,5 @@ def merge_clips(videolist, outputfile):
     lengthlist = get_length_list(videolist)
     generate_subtitles_file(videolist, subfilepath, lengthlist)
     generate_ffmetadata(videolist, lengthlist, metadatapath)
-    run_ffmpeg_merge(ffmpeg_input_file_path, outputfilepath, logfilepath, subfilepath, metadatapath)
+    run_ffmpeg_merge(ffmpeg_input_file_path, outputfilepath, logfilepath, subfilepath, metadatapath, merge_2_audio_tracks, video_encoding, audio_encoding, audio_bitrate)
     # END OF MUTATING IO OPERATIONS
